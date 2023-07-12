@@ -46,20 +46,21 @@ class OvmmLLMAgent(OpenVocabManipAgent):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model, self.preprocess = clip.load("ViT-B/32", device=self.device)
         # self.goal_obs = {}
-        self.clip_threshold = 0.8
-        self.num_object_pixel_threshold = 500
+        self.clip_threshold = 0.5
+        self.num_object_pixel_threshold = 1000
 
         self.object_of_interest = None
         self.object_names = None
 
         self.memory = {}
+        self.memory_piece = None
 
     def _save_image(self, rgb, filename):
         """Simple helper function to save images for debug"""
         im = Image.fromarray(rgb)
-        im.save("datadump/" + filename)
+        im.save("datadump/object_images/" + filename)
 
-    def _update_memory(self, obs):
+    def _update_memory(self, obs, cur_episode):
         text = clip.tokenize(self.object_names).to(self.device)
         # curr_pose = np.array([obs.gps[0], obs.gps[1], obs.compass[0]])
 
@@ -75,7 +76,8 @@ class OvmmLLMAgent(OpenVocabManipAgent):
                 continue
 
             # record GT label of if the object has been found
-            self.memory[self.timesteps[0]]["is_found"][i] = True
+            # self.memory[self.timesteps[0]]["is_found"][i] = True
+            self.memory_piece["is_found"][i] = True
 
             image_arr = self._segment_goal(obs, object_id)
             image = (
@@ -90,11 +92,25 @@ class OvmmLLMAgent(OpenVocabManipAgent):
                 if np.max(probs) > self.clip_threshold:
                     # if True:
                     print(probs)
-                    self._save_image(image_arr, "detected_object.png")
+                    image_name = (
+                        "e"
+                        + str(cur_episode)
+                        + "_t"
+                        + str(self.timesteps[0])
+                        + "_o"
+                        + str(i)
+                        + ".png"
+                    )
+                    # self._save_image(image_arr, "detected_object.png")
+                    self._save_image(image_arr, image_name)
                     print(self.object_names[np.argmax(probs)])
                     print("Label probs:", probs)
-
+                    """
                     self.memory[self.timesteps[0]]["clip_features"].append(
+                        image_features.squeeze(0).tolist()
+                    )
+                    """
+                    self.memory_piece["clip_features"].append(
                         image_features.squeeze(0).tolist()
                     )
 
@@ -137,24 +153,43 @@ class OvmmLLMAgent(OpenVocabManipAgent):
 
     def act(self, obs: Observations) -> Tuple[DiscreteNavigationAction, Dict[str, Any]]:
         """State machine"""
-        if self.object_of_interest is None:
-            self.object_of_interest = np.array(
-                [
-                    obs.task_observations["object_goal"],
-                    obs.task_observations["start_recep_goal"],
-                    obs.task_observations["end_recep_goal"],
-                ]
-            )
-        if self.object_names is None:
-            self.object_names = obs.task_observations["goal_name"].split(" ")
-
+        self.object_of_interest = np.array(
+            [
+                obs.task_observations["object_goal"],
+                obs.task_observations["start_recep_goal"],
+                obs.task_observations["end_recep_goal"],
+            ]
+        )
+        self.object_names = obs.task_observations["goal_name"].split(" ")
+        """
         self.memory[self.timesteps[0]] = {
+            "objects": self.object_names,
+            "clip_features": [],
+            "is_found": [False, False, False],
+        }
+        """
+        with open("datadump/memory_data.json") as f:
+            saved_memory = json.load(f)
+            if len(saved_memory) == 0:
+                cur_episode = 0
+            elif self.timesteps[0] == 0:
+                cur_episode = saved_memory[-1]["episode"] + 1
+            else:
+                cur_episode = saved_memory[-1]["episode"]
+        self.memory_piece = {
+            "episode": cur_episode,
+            "timestep": self.timesteps[0],
             "objects": self.object_names,
             "clip_features": [],
             "is_found": [False, False, False],
         }
         if any(ele in obs.semantic for ele in self.object_of_interest):
             print(f"Update robot memory at timestep {self.timesteps[0]}")
-            self._update_memory(obs)
+            self._update_memory(obs, cur_episode)
+        with open("datadump/memory_data.json", "r") as f:
+            prev_data = json.load(f)
+        prev_data.append(self.memory_piece)
+        with open("datadump/memory_data.json", "w") as f:
+            json.dump(prev_data, f)
 
         return super().act(obs)

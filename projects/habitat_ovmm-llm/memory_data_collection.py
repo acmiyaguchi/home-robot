@@ -103,8 +103,12 @@ if __name__ == "__main__":
     collector = MemoryCollector(config, config_str)
     print(config_str)
     print("-" * 100)
+
+    with open("datadump/memory_data.json", "w") as json_file:
+        json.dump([], json_file)
+
     result = collector.collect(
         num_episodes_per_env=config.EVAL_VECTORIZED.num_episodes_per_env,
     )
-    with open("datadump/memory_data.json", "w") as json_file:
-        json.dump(result, json_file)
+    # with open("datadump/memory_data.json", "w") as json_file:
+    #     json.dump(result, json_file)
